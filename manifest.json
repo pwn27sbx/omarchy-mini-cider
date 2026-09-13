@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "pwnsxb.apple-music",
+  "name": "Mini Cider",
+  "version": "1.0.0",
+  "author": "pwnsxb",
+  "description": "Mini reproductor flotante para Cider 2",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Mini Cider",
+    "category": "Media",
+    "allowMultiple": false
+  }
+}
