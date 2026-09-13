@@ -15,15 +15,7 @@ A beautiful, native, and highly responsive mini-player widget for [Cider 2](http
    ```bash
    omarchy plugin add https://github.com/pwn27sbx/omarchy-mini-cider.git --enable
    ```
-2. Open **Cider 2**, go to Settings > Developer > API, and copy your API Token.
-3. Save your token in the plugin directory:
-   ```bash
-   echo "YOUR_TOKEN_HERE" > ~/.config/omarchy/plugins/pwnsxb.apple-music/cider_token.txt
-   ```
-4. Restart your Omarchy shell to apply the changes:
-   ```bash
-   omarchy restart shell
-   ```
+2. Click the musical note in your Omarchy top bar. The widget will guide you through a quick, interactive onboarding to securely link your Cider API Token!
 
 ## ⌨️ Keyboard Shortcuts
 - `Up/Down`: Navigate through search results.
