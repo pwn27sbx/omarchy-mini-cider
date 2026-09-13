@@ -11,16 +11,16 @@ A beautiful, native, and highly responsive mini-player widget for [Cider 2](http
 
 ## 🚀 Installation
 
-1. Install the plugin to your Omarchy plugins directory:
+1. Install the plugin using the Omarchy CLI:
    ```bash
-   git clone https://github.com/pwn27sbx/omarchy-mini-cider.git ~/.config/omarchy/plugins/pwnsxb.apple-music
+   omarchy plugin add https://github.com/pwn27sbx/omarchy-mini-cider.git --enable
    ```
 2. Open **Cider 2**, go to Settings > Developer > API, and copy your API Token.
 3. Save your token in the plugin directory:
    ```bash
    echo "YOUR_TOKEN_HERE" > ~/.config/omarchy/plugins/pwnsxb.apple-music/cider_token.txt
    ```
-4. Enable the plugin via the Omarchy CLI or restart your shell:
+4. Restart your Omarchy shell to apply the changes:
    ```bash
    omarchy restart shell
    ```
