@@ -9,7 +9,7 @@ BarWidget {
     id: root
     moduleName: "pwnsxb.apple-music"
 
-    implicitWidth: root.bar ? root.bar.barSize : Style.space(32)
+    implicitWidth: 24
     implicitHeight: root.bar ? root.bar.barSize : Style.space(32)
 
     property bool opened: popup.open
@@ -44,16 +44,18 @@ BarWidget {
 
     Process {
         id: tokenReader
-        command: ["bash", "-c", "cat /home/pwnsxb/.config/omarchy/plugins/pwnsxb.apple-music/cider_token.txt 2>/dev/null || true"]
+        command: ["cat", Quickshell.env("HOME") + "/.config/omarchy/plugins/pwnsxb.apple-music/cider_token.txt"]
         running: true
         stdout: StdioCollector {
             id: tokenStdout
             waitForEnd: true
         }
         onExited: function(exitCode, exitStatus) {
-            var text = String(tokenStdout.text).trim();
-            if (text !== "") {
-                root.apiToken = text;
+            if (exitCode === 0) {
+                var text = String(tokenStdout.text).trim();
+                if (text !== "") {
+                    root.apiToken = text;
+                }
             }
         }
     }
@@ -65,7 +67,7 @@ BarWidget {
     function saveToken(token) {
         var cleanToken = token.trim();
         root.apiToken = cleanToken;
-        tokenSaver.command = ["bash", "-c", "echo -n '" + cleanToken + "' > /home/pwnsxb/.config/omarchy/plugins/pwnsxb.apple-music/cider_token.txt"];
+        tokenSaver.command = ["env", "CIDER_TOKEN=" + cleanToken, "python3", Quickshell.env("HOME") + "/.config/omarchy/plugins/pwnsxb.apple-music/helpers/save_token.py", Quickshell.env("HOME") + "/.config/omarchy/plugins/pwnsxb.apple-music/cider_token.txt"];
         tokenSaver.running = true;
         // Reiniciar los timers para cargar datos
         refreshTimer.restart();
@@ -107,14 +109,13 @@ BarWidget {
         }
     }
 
-    Process { id: procPlayNext }
     function playNext(trackId, trackType) {
         if (!trackId || !root.apiToken) return;
-        procPlayNext.command = [
-            "bash", "-c", 
-            "curl -s -X POST -H 'apptoken: " + root.apiToken + "' -H 'Content-Type: application/json' -d '{\"id\":\"" + trackId + "\", \"type\":\"" + trackType + "\"}' http://127.0.0.1:10767/api/v1/playback/play-next"
-        ];
-        procPlayNext.running = true;
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", "http://127.0.0.1:10767/api/v1/playback/play-next");
+        xhr.setRequestHeader("apptoken", root.apiToken);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.send(JSON.stringify({ id: trackId, type: trackType }));
     }
 
     Process {
@@ -342,20 +343,19 @@ BarWidget {
     Process { id: procPlayPause; command: ["playerctl", "play-pause"] }
     Process { id: procNext; command: ["playerctl", "next"] }
     Process { id: procPrev; command: ["playerctl", "previous"] }
-    Process { id: procSeek }
+
 
     function playPause() { procPlayPause.running = true; root.fetchMetadata(); }
     function nextTrack() { procNext.running = true; root.fetchMetadata(); }
     function prevTrack() { procPrev.running = true; root.fetchMetadata(); }
 
-    Process { id: procJumpQueue }
     function jumpToQueueIndex(index) {
         if (index <= 0 || !root.apiToken) return;
-        procJumpQueue.command = [
-            "bash", "-c", 
-            "curl -s -X POST -H 'apptoken: " + root.apiToken + "' -H 'Content-Type: application/json' -d '{\"index\": " + index + "}' http://127.0.0.1:10767/api/v1/playback/queue/change-to-index"
-        ];
-        procJumpQueue.running = true;
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", "http://127.0.0.1:10767/api/v1/playback/queue/change-to-index");
+        xhr.setRequestHeader("apptoken", root.apiToken);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.send(JSON.stringify({ index: index }));
         // Trigger a faster update of the queue
         queueTimer.restart();
     }
@@ -364,11 +364,11 @@ BarWidget {
         if (!root.apiToken) return;
         root.lastSeekTime = Date.now();
         root.trackPosition = positionSecs; // Optimistic update
-        procSeek.command = [
-            "bash", "-c", 
-            "curl -s -X POST -H 'apptoken: " + root.apiToken + "' -H 'Content-Type: application/json' -d '{\"position\": " + positionSecs + "}' http://127.0.0.1:10767/api/v1/playback/seek"
-        ];
-        procSeek.running = true;
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", "http://127.0.0.1:10767/api/v1/playback/seek");
+        xhr.setRequestHeader("apptoken", root.apiToken);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.send(JSON.stringify({ position: positionSecs }));
     }
 
     function toggle() {
@@ -377,7 +377,12 @@ BarWidget {
 
     WidgetButton {
         id: button
-        anchors.fill: parent
+        width: 24
+        height: parent.height
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.horizontalCenterOffset: -4.5 // Desplazamiento extra a la izquierda para balancear la asimetría de la nota
+        horizontalMargin: 0
         bar: root.bar
         text: "\uf001" // fa-music
         tooltipText: "Cider (Apple Music)"
