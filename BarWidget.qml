@@ -9,8 +9,8 @@ BarWidget {
     id: root
     moduleName: "pwnsxb.apple-music"
 
-    implicitWidth: 24
-    implicitHeight: root.bar ? root.bar.barSize : Style.space(32)
+    implicitWidth: button.implicitWidth
+    implicitHeight: button.implicitHeight
 
     property bool opened: popup.open
 
@@ -452,14 +452,9 @@ BarWidget {
         popup.open = !popup.open;
     }
 
-    WidgetButton {
+    BarIconButton {
         id: button
-        width: 24
-        height: parent.height
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.horizontalCenterOffset: -4.5 // Desplazamiento extra a la izquierda para balancear la asimetría de la nota
-        horizontalMargin: 0
+        anchors.fill: parent
         bar: root.bar
         text: "\uf001" // fa-music
         tooltipText: "Cider (Apple Music)"
