@@ -29,6 +29,21 @@ Item {
 
     property bool hasToken: hostWidget && hostWidget.apiToken && hostWidget.apiToken !== ""
 
+    // Only load images from Apple's own artwork CDN, over https. Anything
+    // else (including a malformed URL) is rejected and the Image is left
+    // empty rather than fetched.
+    function safeArtworkUrl(url) {
+        if (!url) return "";
+        var text = String(url);
+        var match = text.match(/^https:\/\/([^\/]+)\//i);
+        if (!match) return "";
+        var host = match[1].toLowerCase();
+        if (host !== "mzstatic.com" && host.slice(-".mzstatic.com".length) !== ".mzstatic.com") {
+            return "";
+        }
+        return text;
+    }
+
     Column {
         visible: hasToken
         anchors.centerIn: parent
@@ -62,7 +77,9 @@ Item {
                     id: albumImage
                     anchors.fill: parent
                     anchors.margins: Style.space(3)
-                    source: hostWidget ? hostWidget.albumArtUrl : ""
+                    source: hostWidget ? root.safeArtworkUrl(hostWidget.albumArtUrl) : ""
+                    sourceSize.width: 640
+                    sourceSize.height: 640
                     fillMode: Image.PreserveAspectCrop
                     visible: source !== ""
                     layer.enabled: true
@@ -102,6 +119,7 @@ Item {
 
                     Text {
                         text: hostWidget ? hostWidget.trackTitle : "Unknown Title"
+                        textFormat: Text.PlainText
                         color: Color.foreground
                         font.pixelSize: Style.font.subtitle
                         font.bold: true
@@ -112,6 +130,7 @@ Item {
 
                     Text {
                         text: hostWidget ? hostWidget.trackArtist : "Unknown Artist"
+                        textFormat: Text.PlainText
                         color: Color.foreground
                         opacity: 0.45
                         font.pixelSize: Style.font.bodySmall
@@ -552,7 +571,9 @@ Item {
                                 width: Style.space(32)
                                 height: Style.space(32)
                                 anchors.verticalCenter: parent.verticalCenter
-                                source: modelData.isGlobal ? modelData.artwork : ""
+                                source: modelData.isGlobal ? root.safeArtworkUrl(modelData.artwork) : ""
+                                sourceSize.width: 128
+                                sourceSize.height: 128
                                 fillMode: Image.PreserveAspectCrop
                             }
                             
@@ -563,6 +584,7 @@ Item {
                                 
                                 Text {
                                     text: modelData.isPlaying && hostWidget && hostWidget.trackTitle !== "Waiting for Cider..." ? hostWidget.trackTitle : (modelData.title || "")
+                                    textFormat: Text.PlainText
                                     color: modelData.isPlaying ? Color.accent : Color.foreground
                                     opacity: modelData.isPlaying ? 1.0 : 0.7
                                     font.pixelSize: Style.font.bodySmall
@@ -571,9 +593,10 @@ Item {
                                     elide: Text.ElideRight
                                     width: parent.width
                                 }
-                                
+
                                 Text {
                                     text: modelData.isPlaying && hostWidget && hostWidget.trackArtist !== "No artist playing" ? hostWidget.trackArtist : (modelData.artist || "")
+                                    textFormat: Text.PlainText
                                     color: Color.foreground
                                     opacity: 0.35
                                     font.pixelSize: Style.font.bodySmall - 2
@@ -671,6 +694,7 @@ Item {
                         width: parent.width - Style.space(32)
                         anchors.centerIn: parent
                         text: modelData.text || ""
+                        textFormat: Text.PlainText
                         color: lyricsList.currentIndex === index ? Color.accent : Color.foreground
                         opacity: lyricsList.currentIndex === index ? 1.0 : (modelData.time === -1 ? 0.7 : 0.4)
                         font.family: Style.font.family

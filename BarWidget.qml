@@ -25,21 +25,14 @@ BarWidget {
     property var parsedLyrics: []
     property int savedTab: 0
     
-    property string userCountry: "mx"
-    Component.onCompleted: {
-        var xhr = new XMLHttpRequest();
-        xhr.open("GET", "https://get.geojs.io/v1/ip/country.json");
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
-                try {
-                    var data = JSON.parse(xhr.responseText);
-                    if (data.country) {
-                        root.userCountry = data.country.toLowerCase();
-                    }
-                } catch(e) {}
-            }
-        }
-        xhr.send();
+    // Country for the iTunes search API, derived from the system locale
+    // instead of an external IP-geolocation lookup (no extra network call,
+    // no IP address leaves the machine for this purpose).
+    property string userCountry: {
+        var name = String(Qt.locale().name || "");
+        var parts = name.split("_");
+        var code = parts.length > 1 ? parts[1].toLowerCase() : "";
+        return /^[a-z]{2}$/.test(code) ? code : "us";
     }
 
     // Network bounds: every request gets a deadline and a response-size cap
