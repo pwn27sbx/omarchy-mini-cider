@@ -17,6 +17,25 @@ A beautiful, native, and highly responsive mini-player widget for [Cider 2](http
    ```
 2. Click the musical note in your Omarchy top bar. The widget will guide you through a quick, interactive onboarding to securely link your Cider API Token!
 
+## 🔒 Privacy and network access
+
+Mini Cider talks to exactly these endpoints, and nothing else:
+
+- **`http://127.0.0.1:10767`** — the local Cider desktop app's own API, used
+  for playback control, the queue and now-playing metadata. Requests
+  include your app token, which is stored at
+  `$XDG_STATE_HOME/mini-cider/token` (defaults to
+  `~/.local/state/mini-cider/token`) with `0600` permissions and is never
+  passed as a command-line argument or an environment variable.
+- **Apple's iTunes Search API** (`itunes.apple.com`) — used to search the
+  Apple Music catalog. Only your search text and a two-letter country code
+  are sent; the country code is derived from your system locale, not from
+  an IP-geolocation lookup.
+- **`lrclib.net`** — used to fetch synchronized lyrics for the currently
+  playing track, using only its title and artist name.
+
+No other network access is made by the plugin.
+
 ## ⌨️ Keyboard Shortcuts
 - `Up/Down`: Navigate through search results.
 - `Enter`: Instantly play the selected track.
