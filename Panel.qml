@@ -355,7 +355,19 @@ Item {
                     if (hostWidget) hostWidget.searchAppleMusic(root.searchText);
                 }
             }
-            
+
+            Timer {
+                id: queuedGlobalPlaceholderTimer
+                interval: 2500
+                onTriggered: searchInput.placeholderText = "Search queue & Apple Music..."
+            }
+
+            Timer {
+                id: queuedLocalPlaceholderTimer
+                interval: 1000
+                onTriggered: searchInput.placeholderText = "Search queue & Apple Music..."
+            }
+
             TextField {
                 id: searchInput
                 visible: root.currentTab === 0
@@ -467,11 +479,11 @@ Item {
                                 hostWidget.queueSearchItem(item.id);
                                 searchInput.text = "";
                                 searchInput.placeholderText = "Added to queue! (Wait 2s...)";
-                                var timer1 = Qt.createQmlObject('import QtQml 2.15; Timer { interval: 2500; running: true; onTriggered: { searchInput.placeholderText = "Search queue & Apple Music..."; this.destroy(); } }', searchInput);
+                                queuedGlobalPlaceholderTimer.restart();
                             } else {
                                 hostWidget.playNext(item.id, item.type || "song");
                                 searchInput.placeholderText = "Added to queue!";
-                                var timer2 = Qt.createQmlObject('import QtQml 2.15; Timer { interval: 1000; running: true; onTriggered: { searchInput.placeholderText = "Search queue & Apple Music..."; this.destroy(); } }', searchInput);
+                                queuedLocalPlaceholderTimer.restart();
                             }
                             searchInput.forceActiveFocus();
                         }
@@ -760,13 +772,16 @@ Item {
         
         Process {
             id: procPaste
-            command: ["wl-paste", "-n", "-t", "text/plain"]
+            command: ["timeout", "-k", "1", "2", "wl-paste", "-n", "-t", "text/plain"]
             stdout: StdioCollector {
                 id: pasteStdout
                 waitForEnd: true
             }
             onExited: function(exitCode, exitStatus) {
-                var text = String(pasteStdout.text).trim();
+                // Bound the clipboard read: at most 4 KiB collected, and the
+                // value assigned to the token field is trimmed to 512 chars.
+                var raw = String(pasteStdout.text).substring(0, 4096);
+                var text = raw.trim().substring(0, 512);
                 if (text !== "") {
                     tokenInput.text = text;
                 }

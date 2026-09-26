@@ -190,9 +190,8 @@ BarWidget {
             root.capNowPlaying, root.localTimeoutMs, function() {});
     }
 
-    Process {
-        id: ciderLauncher
-        command: ["bash", "-c", "cider &"]
+    function launchCider() {
+        Quickshell.execDetached(["cider"]);
     }
 
     property var searchResults: []
@@ -221,6 +220,12 @@ BarWidget {
             });
     }
 
+    Timer {
+        id: playSearchItemAdvanceTimer
+        interval: 1500
+        onTriggered: root.nextTrack()
+    }
+
     function playSearchItem(trackId) {
         if (!root.apiToken) return;
         root.requestJson("POST", "http://127.0.0.1:10767/api/v1/playback/play-next",
@@ -228,7 +233,7 @@ BarWidget {
             JSON.stringify({ id: trackId.toString(), type: "song" }),
             root.capNowPlaying, root.localTimeoutMs,
             function() {
-                var timer = Qt.createQmlObject('import QtQml 2.15; Timer { interval: 1500; running: true; onTriggered: { root.nextTrack(); this.destroy(); } }', root);
+                playSearchItemAdvanceTimer.restart();
             });
     }
 
@@ -414,9 +419,9 @@ BarWidget {
     }
 
     // Comandos de control MPRIS (o API)
-    Process { id: procPlayPause; command: ["playerctl", "play-pause"] }
-    Process { id: procNext; command: ["playerctl", "next"] }
-    Process { id: procPrev; command: ["playerctl", "previous"] }
+    Process { id: procPlayPause; command: ["timeout", "-k", "1", "3", "playerctl", "play-pause"] }
+    Process { id: procNext; command: ["timeout", "-k", "1", "3", "playerctl", "next"] }
+    Process { id: procPrev; command: ["timeout", "-k", "1", "3", "playerctl", "previous"] }
 
 
     function playPause() { procPlayPause.running = true; root.fetchMetadata(); }
@@ -460,9 +465,9 @@ BarWidget {
         tooltipText: "Cider (Apple Music)"
         active: root.opened
 
-        onPressed: function(mouse) { 
+        onPressed: function(mouse) {
             if (mouse === Qt.RightButton || mouse === Qt.MiddleButton) {
-                ciderLauncher.running = true;
+                root.launchCider();
             } else {
                 root.toggle();
             }
