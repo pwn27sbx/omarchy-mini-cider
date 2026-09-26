@@ -42,9 +42,13 @@ BarWidget {
         xhr.send();
     }
 
+    property string legacyTokenPath: String(Qt.resolvedUrl("cider_token.txt")).replace(/^file:\/\//, "")
+    property string readTokenHelperPath: String(Qt.resolvedUrl("helpers/read_token.py")).replace(/^file:\/\//, "")
+    property string saveTokenHelperPath: String(Qt.resolvedUrl("helpers/save_token.py")).replace(/^file:\/\//, "")
+
     Process {
         id: tokenReader
-        command: ["cat", Quickshell.env("HOME") + "/.config/omarchy/plugins/pwnsxb.apple-music/cider_token.txt"]
+        command: ["timeout", "-k", "1", "3", "python3", root.readTokenHelperPath, root.legacyTokenPath]
         running: true
         stdout: StdioCollector {
             id: tokenStdout
@@ -62,12 +66,23 @@ BarWidget {
 
     Process {
         id: tokenSaver
+        property string pendingToken: ""
+        command: ["timeout", "-k", "1", "3", "python3", root.saveTokenHelperPath, root.legacyTokenPath]
+        onStarted: {
+            write(pendingToken + "\n");
+            // Dropped immediately: this string holds the plugin's only secret.
+            pendingToken = "";
+            stdinEnabled = false;
+        }
     }
 
     function saveToken(token) {
         var cleanToken = token.trim();
         root.apiToken = cleanToken;
-        tokenSaver.command = ["env", "CIDER_TOKEN=" + cleanToken, "python3", Quickshell.env("HOME") + "/.config/omarchy/plugins/pwnsxb.apple-music/helpers/save_token.py", Quickshell.env("HOME") + "/.config/omarchy/plugins/pwnsxb.apple-music/cider_token.txt"];
+        // The token is sent only through stdin: it must never appear in
+        // argv or an environment variable of the spawned process.
+        tokenSaver.pendingToken = cleanToken;
+        tokenSaver.stdinEnabled = true;
         tokenSaver.running = true;
         // Reiniciar los timers para cargar datos
         refreshTimer.restart();
