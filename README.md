@@ -33,6 +33,8 @@ Mini Cider talks to exactly these endpoints, and nothing else:
   an IP-geolocation lookup.
 - **`lrclib.net`** — used to fetch synchronized lyrics for the currently
   playing track, using only its title and artist name.
+- **Apple's artwork CDN** (`*.mzstatic.com`) — album covers and search
+  thumbnails are loaded from here; any other image URL is ignored.
 
 No other network access is made by the plugin.
 

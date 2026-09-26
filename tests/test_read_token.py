@@ -89,5 +89,18 @@ class ReadTokenTests(unittest.TestCase):
             self.assertLessEqual(len(proc.stdout.strip()), 4 * 1024)
 
 
+    def test_oversized_token_rejected_not_truncated(self):
+        # A token file larger than the cap must be rejected outright, never
+        # silently truncated into a different token.
+        with tempfile.TemporaryDirectory() as state_home:
+            token_dir = os.path.join(state_home, "mini-cider")
+            os.makedirs(token_dir, mode=0o700)
+            with open(os.path.join(token_dir, "token"), "w") as f:
+                f.write("a" * (4 * 1024 + 1))
+            env = dict(os.environ)
+            env["XDG_STATE_HOME"] = state_home
+            proc = subprocess.run([sys.executable, HELPER], capture_output=True, text=True, env=env, timeout=10)
+            self.assertEqual(proc.stdout.strip(), "")
+
 if __name__ == "__main__":
     unittest.main()

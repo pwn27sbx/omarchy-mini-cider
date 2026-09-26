@@ -45,8 +45,11 @@ def read_token_file(path):
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
             return None
 
+        # Read at most the cap plus one byte from the same descriptor and
+        # reject overflow, so an oversized file is never truncated into a
+        # different token.
         chunks = []
-        remaining = MAX_TOKEN_BYTES
+        remaining = MAX_TOKEN_BYTES + 1
         while remaining > 0:
             chunk = os.read(fd, min(65536, remaining))
             if not chunk:
@@ -56,6 +59,8 @@ def read_token_file(path):
         data = b"".join(chunks)
     finally:
         os.close(fd)
+    if len(data) > MAX_TOKEN_BYTES:
+        return None
 
     try:
         text = data.decode("utf-8", errors="strict")
