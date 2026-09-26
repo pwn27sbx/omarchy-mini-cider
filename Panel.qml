@@ -35,7 +35,9 @@ Item {
     function safeArtworkUrl(url) {
         if (!url) return "";
         var text = String(url);
-        var match = text.match(/^https:\/\/([^\/]+)\//i);
+        // Host charset is restricted so "?", "#", "@" or ":" cannot smuggle a
+        // different real host past the suffix check.
+        var match = text.match(/^https:\/\/([a-z0-9.-]+)\//i);
         if (!match) return "";
         var host = match[1].toLowerCase();
         if (host !== "mzstatic.com" && host.slice(-".mzstatic.com".length) !== ".mzstatic.com") {
