@@ -139,5 +139,20 @@ class SaveTokenTests(unittest.TestCase):
                 self.assertEqual(f.read(), "real-old-token")
 
 
+    def test_legacy_not_removed_through_symlinked_parent(self):
+        # The legacy file's directory is opened without following links, so a
+        # symlinked parent never lets the helper delete a file elsewhere.
+        with tempfile.TemporaryDirectory() as state_home, tempfile.TemporaryDirectory() as base:
+            real_dir = os.path.join(base, "real")
+            os.mkdir(real_dir)
+            victim = os.path.join(real_dir, "cider_token.txt")
+            with open(victim, "w") as f:
+                f.write("keep")
+            link_dir = os.path.join(base, "link")
+            os.symlink(real_dir, link_dir)
+            proc = run_save(b"tok123\n", state_home, legacy_path=os.path.join(link_dir, "cider_token.txt"))
+            self.assertEqual(proc.returncode, 0)
+            self.assertTrue(os.path.exists(victim))
+
 if __name__ == "__main__":
     unittest.main()

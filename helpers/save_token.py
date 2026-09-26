@@ -9,10 +9,11 @@ Security model (marketplace review):
     back to `~/.local/state`), never inside the plugin's own directory.
   - The state directory is created 0700 and must be owned by the current
     user and not a symlink; saving refuses otherwise.
-  - Writes are atomic: write to a private mkstemp() file in the same
-    directory (mode 0600), fsync, then os.replace() into place -- a
-    symlinked destination path is never opened for writing directly, since
-    os.replace() swaps the directory entry rather than following it.
+  - The directory is opened once with O_DIRECTORY | O_NOFOLLOW and every
+    write is relative to that descriptor: a private temp file is created
+    with O_CREAT | O_EXCL | O_NOFOLLOW (0600), fsynced, then renamed over
+    `token` with os.replace(), which swaps the entry and never follows a
+    symlinked destination.
   - After a successful save, the legacy plugin-directory token file (if
     given as argv[1]) is removed, but only when it is a regular file owned
     by the current user and not a symlink, so a symlinked legacy path is
@@ -21,7 +22,6 @@ Security model (marketplace review):
 import os
 import stat
 import sys
-import tempfile
 
 MAX_TOKEN_BYTES = 4 * 1024
 
@@ -42,31 +42,32 @@ def _token_path():
     return os.path.join(_token_dir(), "token")
 
 
-def _ensure_token_dir():
+def _open_token_dir():
+    """Create (0700) and open the token directory without following links.
+
+    Returns a directory fd; every later operation is relative to it, so the
+    directory cannot be swapped for a symlink between the check and the write.
+    """
     d = _token_dir()
     try:
         os.makedirs(d, mode=0o700, exist_ok=True)
     except OSError as e:
         raise RuntimeError(f"cannot create token dir: {e}")
-
     try:
-        st = os.lstat(d)
+        dfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError as e:
-        raise RuntimeError(f"cannot stat token dir: {e}")
-
-    if stat.S_ISLNK(st.st_mode):
-        raise RuntimeError("token directory must not be a symlink")
-    if not stat.S_ISDIR(st.st_mode):
-        raise RuntimeError("token path is not a directory")
-    if st.st_uid != os.getuid():
-        raise RuntimeError("token directory is not owned by the current user")
-
-    # Tighten permissions if they were looser than expected (pre-existing dir).
+        raise RuntimeError(f"token directory must be a real directory: {e}")
     try:
-        os.chmod(d, 0o700)
-    except OSError:
-        pass
-    return d
+        st = os.fstat(dfd)
+        if not stat.S_ISDIR(st.st_mode):
+            raise RuntimeError("token path is not a directory")
+        if st.st_uid != os.getuid():
+            raise RuntimeError("token directory is not owned by the current user")
+        os.fchmod(dfd, 0o700)
+    except BaseException:
+        os.close(dfd)
+        raise
+    return dfd
 
 
 def read_stdin_token(stream=None):
@@ -88,43 +89,58 @@ def read_stdin_token(stream=None):
 
 
 def save_token(token):
-    d = _ensure_token_dir()
-    payload = token.encode("utf-8")
-
-    fd, tmp_path = tempfile.mkstemp(prefix=".token-", dir=d)
+    dfd = _open_token_dir()
     try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, _token_path())
-    except BaseException:
+        payload = token.encode("utf-8")
+        tmp_name = ".token-" + os.urandom(8).hex()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+        fd = os.open(tmp_name, flags, 0o600, dir_fd=dfd)
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+            try:
+                os.fchmod(fd, 0o600)
+                os.write(fd, payload)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            # rename(2) replaces the directory entry; it never follows a
+            # symlink at the destination.
+            os.replace(tmp_name, "token", src_dir_fd=dfd, dst_dir_fd=dfd)
+            os.fsync(dfd)
+        except BaseException:
+            try:
+                os.unlink(tmp_name, dir_fd=dfd)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.close(dfd)
 
 
 def remove_legacy_token(path):
-    """Remove the legacy plugin-directory token file, only when it is safe."""
+    """Remove the legacy plugin-directory token file, only when it is safe.
+
+    The parent is opened without following links and the entry is checked
+    and unlinked relative to that descriptor, so a symlink is never removed
+    through or followed.
+    """
     if not path:
         return
-    try:
-        st = os.lstat(path)
-    except OSError:
-        return
-    if stat.S_ISLNK(st.st_mode):
-        return
-    if not stat.S_ISREG(st.st_mode):
-        return
-    if st.st_uid != os.getuid():
+    parent, name = os.path.split(path)
+    if not parent or not name:
         return
     try:
-        os.remove(path)
+        dfd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError:
-        pass
+        return
+    try:
+        st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            return
+        os.unlink(name, dir_fd=dfd)
+    except OSError:
+        return
+    finally:
+        os.close(dfd)
 
 
 def main(argv):
