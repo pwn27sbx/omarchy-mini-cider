@@ -774,16 +774,18 @@ Item {
         
         Process {
             id: procPaste
-            command: ["timeout", "-k", "1", "2", "wl-paste", "-n", "-t", "text/plain"]
+            // The helper reads wl-paste through a 4 KiB cap and prints a single
+            // validated line of at most 512 chars, so the collector below never
+            // holds more than that, whatever is on the clipboard.
+            command: ["timeout", "-k", "1", "3", "python3",
+                      String(Qt.resolvedUrl("helpers/read_clipboard.py")).replace(/^file:\/\//, "")]
             stdout: StdioCollector {
                 id: pasteStdout
                 waitForEnd: true
             }
             onExited: function(exitCode, exitStatus) {
-                // Bound the clipboard read: at most 4 KiB collected, and the
-                // value assigned to the token field is trimmed to 512 chars.
-                var raw = String(pasteStdout.text).substring(0, 4096);
-                var text = raw.trim().substring(0, 512);
+                if (exitCode !== 0) return;
+                var text = String(pasteStdout.text).trim();
                 if (text !== "") {
                     tokenInput.text = text;
                 }

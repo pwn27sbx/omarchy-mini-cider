@@ -38,6 +38,11 @@ Mini Cider talks to exactly these endpoints, and nothing else:
 
 No other network access is made by the plugin.
 
+The onboarding **Paste** button reads the clipboard only when you click it,
+through `helpers/read_clipboard.py`: it reads at most 4 KiB from `wl-paste`,
+rejects anything larger, multi-line or containing control characters, and
+fills the token field only with a single line of up to 512 characters.
+
 ## ⌨️ Keyboard Shortcuts
 - `Up/Down`: Navigate through search results.
 - `Enter`: Instantly play the selected track.
