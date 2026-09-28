@@ -756,7 +756,7 @@ Item {
         Text {
             text: "Connect to Cider"
             color: Color.foreground
-            font.pixelSize: Style.font.h6
+            font.pixelSize: Style.font.heading
             font.bold: true
             font.family: Style.font.family
             anchors.horizontalCenter: parent.horizontalCenter
