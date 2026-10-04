@@ -101,6 +101,46 @@ test("metadataAction applies REST as-is without an MPRIS player", () => {
 
 // ---- Lyrics model ----------------------------------------------------------
 
+// --- projection lag compensation ---
+test("probeCorrection is how far the Quickshell clock is behind a probe", () => {
+  assert.ok(Math.abs(P.probeCorrection(100.0, 100.15) - 0.15) < 1e-9)
+  assert.ok(Math.abs(P.probeCorrection(100.2, 100.15) + 0.05) < 1e-9)
+  assert.strictEqual(P.probeCorrection(NaN, 1), 0)
+  assert.strictEqual(P.probeCorrection(1, undefined), 0)
+})
+
+test("bestCorrection keeps the freshest (largest) probe and ignores garbage", () => {
+  // each probe is stale by 0..0.1 s, so the largest is the closest to the truth
+  assert.ok(Math.abs(P.bestCorrection([0.10, 0.19, 0.14]) - 0.19) < 1e-9)
+  assert.strictEqual(P.bestCorrection([]), 0)
+  assert.strictEqual(P.bestCorrection(null), 0)
+  // a track-level offset (not lag) must not be mistaken for lag
+  assert.strictEqual(P.bestCorrection([218.6, 218.5]), 0)
+  assert.ok(Math.abs(P.bestCorrection([218.6, 0.12]) - 0.12) < 1e-9)
+})
+
+test("projectPosition applies the lag correction while playing and when paused", () => {
+  assert.ok(Math.abs(P.projectPosition(10, 1000, 1500, true, 0, 0.2) - 10.7) < 1e-9)
+  assert.ok(Math.abs(P.projectPosition(10, 1000, 1500, false, 0, 0.2) - 10.2) < 1e-9)
+  assert.strictEqual(P.projectPosition(10, 1000, 1500, true, 0), 10.5)
+  assert.strictEqual(P.projectPosition(10, 1000, 1500, true, 10.4, 0.2), 10.4)
+})
+
+test("restBias detects an MPRIS position that is offset from REST", () => {
+  assert.ok(Math.abs(P.restBias(291.16, 72.6) + 218.56) < 1e-9)
+  assert.strictEqual(P.restBias(73.1, 72.6), 0)
+  assert.strictEqual(P.restBias(NaN, 72.6), 0)
+  assert.strictEqual(P.restBias(10, NaN), 0)
+})
+
+test("playerctlName extracts a safe player name from a bus name", () => {
+  assert.strictEqual(P.playerctlName("org.mpris.MediaPlayer2.chromium.instance314583"), "chromium.instance314583")
+  assert.strictEqual(P.playerctlName("org.mpris.MediaPlayer2.-evil"), null)
+  assert.strictEqual(P.playerctlName("org.mpris.MediaPlayer2.a b"), null)
+  assert.strictEqual(P.playerctlName("something.else"), null)
+  assert.strictEqual(P.playerctlName(null), null)
+})
+
 const L = load("Lyrics.js")
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, a + " != " + b)
 

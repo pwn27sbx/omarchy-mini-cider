@@ -252,8 +252,14 @@ BarWidget {
     // publishes no player; the REST polling below is then the fallback.
     property var ciderPlayer: Playback.findCider(Mpris.players ? Mpris.players.values : [])
     readonly property bool hasMpris: ciderPlayer !== null
+    onCiderPlayerChanged: lagResetTimer.restart()
     property real mprisSampleRaw: -1
     property real mprisSampleMs: 0
+    // Seconds the Quickshell position clock trails the player (see
+    // Playback.probeCorrection) and the track-level offset of Cider's MPRIS
+    // Position against REST (Playback.restBias). Both are added to the raw value.
+    property real lagCorrection: 0
+    property real mprisBias: 0
 
     Connections {
         target: Mpris.players
@@ -280,14 +286,77 @@ BarWidget {
             root.mprisSampleMs = now;
         }
         root.trackPosition = Playback.projectPosition(root.mprisSampleRaw, root.mprisSampleMs,
-            now, root.isPlaying, root.trackLength);
+            now, root.isPlaying, root.trackLength, root.lagCorrection + root.mprisBias);
+    }
+
+    // Lag probes: a fresh `playerctl position` read compared with the clock at
+    // the same moment. A burst right after an event that re-anchors the clock
+    // (about 0.4 s of probes spans the player's 0.1 s position steps), then one
+    // probe every few seconds; the best of the last few wins.
+    property var probeWindow: []
+    property int probesLeft: 0
+    property real probeClockBefore: 0
+    readonly property string probePlayerName: Playback.playerctlName(root.ciderPlayer ? root.ciderPlayer.dbusName : "") || ""
+
+    function startProbeBurst() {
+        root.probeWindow = [];
+        root.probesLeft = 8;
+        probeGapTimer.restart();
+    }
+
+    Timer {
+        id: lagResetTimer
+        interval: 300
+        repeat: false
+        onTriggered: root.startProbeBurst()
+    }
+
+    Timer {
+        id: probeGapTimer
+        interval: 45
+        repeat: false
+        onTriggered: {
+            if (root.probePlayerName === "" || positionProbe.running) return;
+            var player = root.ciderPlayer;
+            if (!player || !root.isPlaying) return;
+            player.positionChanged();
+            root.probeClockBefore = Number(player.position);
+            positionProbe.running = true;
+        }
+    }
+
+    Timer {
+        interval: 4000
+        repeat: true
+        running: root.hasMpris && root.isPlaying
+        onTriggered: { if (root.probesLeft <= 0) { root.probesLeft = 1; probeGapTimer.restart(); } }
+    }
+
+    Process {
+        id: positionProbe
+        command: ["timeout", "-k", "1", "2", "playerctl", "-p", root.probePlayerName, "position"]
+        stdout: StdioCollector { id: probeOut; waitForEnd: true }
+        onExited: function(exitCode, exitStatus) {
+            var player = root.ciderPlayer;
+            if (exitCode === 0 && player && root.isPlaying) {
+                player.positionChanged();
+                // The player answered about halfway through the call.
+                var clock = (root.probeClockBefore + Number(player.position)) / 2;
+                var w = root.probeWindow.slice(-5);
+                w.push(Playback.probeCorrection(clock, parseFloat(String(probeOut.text).trim())));
+                root.probeWindow = w;
+                root.lagCorrection = Playback.bestCorrection(w);
+            }
+            if (root.probesLeft > 0) root.probesLeft--;
+            if (root.probesLeft > 0) probeGapTimer.restart();
+        }
     }
 
     Connections {
         target: root.ciderPlayer
         ignoreUnknownSignals: true
-        function onIsPlayingChanged() { root.syncFromMpris(true); }
-        function onTrackChanged() { root.syncFromMpris(true); root.checkMprisTrack(); }
+        function onIsPlayingChanged() { root.syncFromMpris(true); lagResetTimer.restart(); }
+        function onTrackChanged() { root.syncFromMpris(true); root.checkMprisTrack(); lagResetTimer.restart(); }
         function onTrackTitleChanged() { root.checkMprisTrack(); }
         function onTrackArtistChanged() { root.checkMprisTrack(); }
     }
@@ -309,6 +378,7 @@ BarWidget {
         var key = Playback.trackKey(player.trackTitle, player.trackArtist);
         if (key === "" || key === root.lastMprisTrackKey) return;
         root.lastMprisTrackKey = key;
+        root.mprisBias = 0;
         root.awaitingTrackChange = true;
         root.trackChangeRetries = 0;
         root.fetchMetadata();
@@ -503,6 +573,13 @@ BarWidget {
                     root.lastPlaybackTimeCheck = pos;
                 }
 
+                if (root.hasMpris && root.ciderPlayer.positionSupported !== false && !isNaN(pos)
+                        && Date.now() - root.lastSeekTime > 2000) {
+                    // Cider's MPRIS Position can stay offset after a track change.
+                    root.ciderPlayer.positionChanged();
+                    root.mprisBias += Playback.restBias(Number(root.ciderPlayer.position) + root.mprisBias, pos);
+                }
+
                 var trackKey = root.trackTitle + "||" + root.trackArtist;
                 if (trackKey !== root.currentLyricsSong && root.trackTitle !== "Waiting for Cider..." && root.trackTitle !== "Unknown") {
                     root.currentLyricsSong = trackKey;
@@ -512,6 +589,14 @@ BarWidget {
                     root.fetchLyrics(trackKey, root.trackTitle, root.trackArtist, data.info.durationInMillis || 0);
                 }
             });
+    }
+
+    // With the panel closed nothing polls REST; keep the MPRIS bias honest.
+    Timer {
+        interval: 5000
+        repeat: true
+        running: root.hasMpris && !root.opened && root.apiToken !== ""
+        onTriggered: root.fetchMetadata()
     }
 
     Timer {
@@ -548,8 +633,9 @@ BarWidget {
         root.trackPosition = positionSecs; // Optimistic update
         var player = root.ciderPlayer;
         if (player && player.canSeek === true && player.positionSupported !== false) {
-            player.position = positionSecs;
+            player.position = positionSecs - root.mprisBias;
             root.syncFromMpris(true); // re-read right after the seek
+            lagResetTimer.restart();
             return;
         }
         if (!root.apiToken) return;
