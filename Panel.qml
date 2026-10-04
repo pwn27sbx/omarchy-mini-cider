@@ -683,20 +683,21 @@ Item {
                 
                 currentIndex: hostWidget ? hostWidget.currentLyricIndex : 0
                 onCurrentIndexChanged: {
-                    if (visible) {
+                    if (visible && currentIndex >= 0) {
                         positionViewAtIndex(currentIndex, ListView.Center);
                     }
                 }
                 
                 onVisibleChanged: {
-                    if (visible) {
+                    if (visible && currentIndex >= 0) {
                         positionViewAtIndex(currentIndex, ListView.Center);
                     }
                 }
                 
                 delegate: Item {
                     width: lyricsList.width
-                    height: lineText.implicitHeight + Style.space(4)
+                    readonly property bool isActive: lyricsList.currentIndex === index && modelData.start >= 0
+                    height: (isActive ? lineFill.implicitHeight : lineText.implicitHeight) + Style.space(4)
                     
                     property real relativeY: y - lyricsList.contentY + (height / 2)
                     property real distFromCenter: Math.abs(relativeY - (lyricsList.height / 2))
@@ -709,24 +710,37 @@ Item {
                         anchors.centerIn: parent
                         text: modelData.text || ""
                         textFormat: Text.PlainText
-                        color: lyricsList.currentIndex === index ? Color.accent : Color.foreground
-                        opacity: lyricsList.currentIndex === index ? 1.0 : (modelData.time === -1 ? 0.7 : 0.4)
+                        visible: !isActive
+                        color: Color.foreground
+                        opacity: modelData.start === -1 ? 0.7 : 0.4
                         font.family: Style.font.family
-                        font.pixelSize: lyricsList.currentIndex === index ? Style.font.bodySmall + 1 : Style.font.bodySmall
-                        font.bold: lyricsList.currentIndex === index
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: false
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignHCenter
                         
                         Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.InOutQuad } }
-                        Behavior on color { ColorAnimation { duration: 250 } }
+                    }
+
+                    LyricFill {
+                        id: lineFill
+                        visible: isActive
+                        width: parent.width - Style.space(32)
+                        anchors.centerIn: parent
+                        line: isActive ? modelData : null
+                        position: hostWidget ? hostWidget.trackPosition : 0
+                        sungColor: Color.foreground
+                        fillColor: Color.accent
+                        fontFamily: Style.font.family
+                        fontSize: Style.font.bodySmall + 1
                     }
                     
                     MouseArea {
                         anchors.fill: parent
-                        cursorShape: modelData.time !== -1 ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        cursorShape: modelData.start >= 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                         onClicked: {
-                            if (modelData.time !== -1 && hostWidget) {
-                                hostWidget.seek(modelData.time);
+                            if (modelData.start >= 0 && hostWidget) {
+                                hostWidget.seek(modelData.start);
                             }
                         }
                     }

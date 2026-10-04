@@ -4,6 +4,7 @@ import Quickshell.Wayland
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import "lib/Playback.js" as Playback
+import "lib/Lyrics.js" as Lyrics
 import qs.Ui
 import qs.Commons
 
@@ -22,8 +23,8 @@ BarWidget {
     property string albumArtUrl: ""
     property string apiToken: ""
     property var queueData: []
-    property string trackLyrics: ""
     property string currentLyricsSong: ""
+    property string lyricsSource: ""
     property var parsedLyrics: []
     property int savedTab: 0
     
@@ -286,8 +287,30 @@ BarWidget {
         target: root.ciderPlayer
         ignoreUnknownSignals: true
         function onIsPlayingChanged() { root.syncFromMpris(true); }
-        function onTrackChanged() { root.syncFromMpris(true); }
+        function onTrackChanged() { root.syncFromMpris(true); root.onCiderTrackChanged(); }
+        function onTrackTitleChanged() { root.onCiderTrackChanged(); }
     }
+
+    // Cider's REST metadata (title, artist, duration) is otherwise only read
+    // while the panel is open. A track change refreshes it once; REST can lag
+    // the MPRIS signal, so an unchanged answer is retried a few times.
+    property bool awaitingTrackChange: false
+    property int trackChangeRetries: 0
+
+    function onCiderTrackChanged() {
+        root.awaitingTrackChange = true;
+        root.trackChangeRetries = 0;
+        root.fetchMetadata();
+    }
+
+    Timer {
+        id: trackChangeRetryTimer
+        interval: 800
+        repeat: false
+        onTriggered: root.fetchMetadata()
+    }
+
+    onApiTokenChanged: root.fetchMetadata()
 
     property bool isPlaying: false
     property real trackPosition: 0
@@ -295,8 +318,8 @@ BarWidget {
     property real lastSeekTime: 0
     property real lastPlaybackTimeCheck: -1
 
-    property int currentLyricIndex: 0
-    property real currentLyricProgress: 0.0
+    // -1 before the first synced line or for unsynced lyrics.
+    property int currentLyricIndex: -1
     property var lastTimerTick: Date.now()
 
     Timer {
@@ -316,85 +339,74 @@ BarWidget {
                 root.trackPosition += dt;
             }
             
-            // Calc current lyric
-            if (root.parsedLyrics && root.parsedLyrics.length > 0) {
-                var idx = 0;
-                for (var i = 0; i < root.parsedLyrics.length; i++) {
-                    if (root.parsedLyrics[i].time !== -1 && root.trackPosition >= root.parsedLyrics[i].time) {
-                        idx = i;
-                    } else if (root.parsedLyrics[i].time !== -1) {
-                        break;
-                    }
-                }
-                root.currentLyricIndex = idx;
-                
-                // Calc progress
-                var currentLyric = root.parsedLyrics[idx];
-                if (currentLyric && currentLyric.time !== -1) {
-                    var startTime = currentLyric.time;
-                    var endTime = root.trackLength;
-                    for (var j = idx + 1; j < root.parsedLyrics.length; j++) {
-                        if (root.parsedLyrics[j].time !== -1) {
-                            endTime = root.parsedLyrics[j].time;
-                            break;
-                        }
-                    }
-                    var duration = endTime - startTime;
-                    if (duration > 0) {
-                        var p = (root.trackPosition - startTime) / duration;
-                        root.currentLyricProgress = Math.max(0.0, Math.min(1.0, p));
-                    } else {
-                        root.currentLyricProgress = 1.0;
-                    }
-                } else {
-                    root.currentLyricProgress = 0.0;
-                }
-            }
+            var idx = Lyrics.findLineIndex(root.parsedLyrics, root.trackPosition, root.currentLyricIndex);
+            if (idx !== root.currentLyricIndex) root.currentLyricIndex = idx;
         }
     }
 
-    function fetchLyrics(trackKey, title, artist) {
-        root.requestJson("GET", "https://lrclib.net/api/get?track_name=" + encodeURIComponent(title) + "&artist_name=" + encodeURIComponent(artist),
-            null, null, root.capLyrics, root.remoteTimeoutMs,
+    readonly property string neteaseSearchUrl: "https://music.163.com/api/search/get"
+    readonly property string neteaseLyricUrl: "https://music.163.com/api/song/lyric/v1"
+
+    function lyricsStatus(text) {
+        return [{ start: -1, end: -1, text: text, words: [] }];
+    }
+
+    // True while trackKey still names the playing track (stale-response guard).
+    function isCurrentTrack(trackKey) {
+        return trackKey === (root.trackTitle + "||" + root.trackArtist);
+    }
+
+    function applyLyrics(trackKey, result) {
+        if (!root.isCurrentTrack(trackKey)) return;
+        root.parsedLyrics = result.lines;
+        root.currentLyricIndex = -1;
+        root.lyricsSource = result.format;
+    }
+
+    // NetEase first (word-timed YRC when available), LRCLIB as the fallback.
+    // A song can exist without lyrics (same recording, other release), so the
+    // best few ranked candidates are tried in order.
+    readonly property int neteaseMaxCandidates: 3
+
+    function fetchLyrics(trackKey, title, artist, durationMs) {
+        var query = (title + " " + artist).trim();
+        root.requestJson("GET", root.neteaseSearchUrl + "?s=" + encodeURIComponent(query) + "&type=1&limit=10",
+            root.neteaseHeaders, null, root.capLyrics, root.remoteTimeoutMs,
+            function(sdata) {
+                if (!root.isCurrentTrack(trackKey)) return;
+                var songs = sdata && sdata.result ? sdata.result.songs : null;
+                var ids = Lyrics.rankNeteaseSongs(songs, title, artist, durationMs).slice(0, root.neteaseMaxCandidates);
+                root.tryNeteaseCandidates(trackKey, title, artist, durationMs, ids, 0);
+            });
+    }
+
+    readonly property var neteaseHeaders: ({ "Referer": "https://music.163.com" })
+
+    function tryNeteaseCandidates(trackKey, title, artist, durationMs, ids, i) {
+        if (i >= ids.length) { root.fetchLrclib(trackKey, title, artist, durationMs); return; }
+        root.requestJson("GET", root.neteaseLyricUrl + "?id=" + encodeURIComponent(ids[i]) + "&lv=1&kv=0&tv=1&yv=1",
+            root.neteaseHeaders, null, root.capLyrics, root.remoteTimeoutMs,
             function(ldata) {
-                // Ignore a response for a track we've since moved past.
-                if (trackKey !== (root.trackTitle + "||" + root.trackArtist)) return;
-                if (!ldata) {
-                    root.parsedLyrics = [{ time: -1, text: "Lyrics not found." }];
-                    return;
-                }
-                try {
-                    var pLyrics = [];
-                    if (ldata.syncedLyrics) {
-                        var lines = String(ldata.syncedLyrics).split('\n');
-                        var lineLimit = Math.min(lines.length, root.maxLyricsLines);
-                        for (var i = 0; i < lineLimit; i++) {
-                            var line = lines[i];
-                            var match = line.match(/^\[(\d+):(\d+\.\d+)\](.*)/);
-                            if (match) {
-                                var m = parseInt(match[1]);
-                                var s = parseFloat(match[2]);
-                                var txt = root.capString(match[3].trim(), root.maxLyricsLineChars);
-                                if (txt === "") txt = "♪";
-                                pLyrics.push({ time: m * 60 + s, text: txt });
-                            }
-                        }
-                    } else if (ldata.plainLyrics) {
-                        var plainLines = String(ldata.plainLyrics).split('\n');
-                        var plainLimit = Math.min(plainLines.length, root.maxLyricsLines);
-                        for (var j = 0; j < plainLimit; j++) {
-                            pLyrics.push({ time: -1, text: root.capString(plainLines[j], root.maxLyricsLineChars) });
-                        }
-                    }
+                if (!root.isCurrentTrack(trackKey)) return;
+                var result = null;
+                try { result = Lyrics.neteaseLyrics(ldata, root.trackLength); } catch (e) { result = null; }
+                if (result) root.applyLyrics(trackKey, result);
+                else root.tryNeteaseCandidates(trackKey, title, artist, durationMs, ids, i + 1);
+            });
+    }
 
-                    if (pLyrics.length === 0) {
-                        pLyrics.push({ time: -1, text: "Instrumental / No lyrics available." });
-                    }
-
-                    root.parsedLyrics = pLyrics;
-                    root.trackLyrics = root.capString(ldata.plainLyrics || "Instrumental / No lyrics available.", root.capLyrics);
-                } catch (e) {
-                    root.parsedLyrics = [{ time: -1, text: "Error parsing lyrics." }];
+    function fetchLrclib(trackKey, title, artist, durationMs) {
+        var url = "https://lrclib.net/api/get?track_name=" + encodeURIComponent(title) + "&artist_name=" + encodeURIComponent(artist);
+        if (durationMs > 0) url += "&duration=" + Math.round(durationMs / 1000);
+        root.requestJson("GET", url, null, null, root.capLyrics, root.remoteTimeoutMs,
+            function(ldata) {
+                if (!root.isCurrentTrack(trackKey)) return;
+                var result = null;
+                try { result = Lyrics.lrclibLyrics(ldata, root.trackLength); } catch (e) { result = null; }
+                if (result) {
+                    root.applyLyrics(trackKey, result);
+                } else {
+                    root.applyLyrics(trackKey, { format: "none", lines: root.lyricsStatus(ldata ? "Instrumental / No lyrics available." : "Lyrics not found.") });
                 }
             });
     }
@@ -409,6 +421,7 @@ BarWidget {
                 root.metadataRequestInFlight = false;
                 if (!data || !data.info) return;
 
+                var previousTitle = root.trackTitle;
                 root.trackTitle = root.capString(data.info.name || "Unknown", root.maxFieldChars);
                 root.trackArtist = root.capString(data.info.artistName || "Cider", root.maxFieldChars);
 
@@ -448,11 +461,24 @@ BarWidget {
                     root.lastPlaybackTimeCheck = pos;
                 }
 
-                if (root.trackTitle !== root.currentLyricsSong && root.trackTitle !== "Waiting for Cider..." && root.trackTitle !== "Unknown") {
-                    root.currentLyricsSong = root.trackTitle;
-                    root.trackLyrics = "Loading lyrics...";
-                    var trackKey = root.trackTitle + "||" + root.trackArtist;
-                    root.fetchLyrics(trackKey, root.trackTitle, root.trackArtist);
+                var trackKey = root.trackTitle + "||" + root.trackArtist;
+                if (trackKey !== root.currentLyricsSong && root.trackTitle !== "Waiting for Cider..." && root.trackTitle !== "Unknown") {
+                    root.currentLyricsSong = trackKey;
+                    root.lyricsSource = "";
+                    root.currentLyricIndex = -1;
+                    root.parsedLyrics = root.lyricsStatus("Loading lyrics...");
+                    root.fetchLyrics(trackKey, root.trackTitle, root.trackArtist, data.info.durationInMillis || 0);
+                }
+
+                // The REST answer can still describe the previous track right
+                // after an MPRIS track change; ask again shortly.
+                if (root.awaitingTrackChange) {
+                    if (root.trackTitle === previousTitle && root.trackChangeRetries < 3) {
+                        root.trackChangeRetries++;
+                        trackChangeRetryTimer.restart();
+                    } else {
+                        root.awaitingTrackChange = false;
+                    }
                 }
             });
     }
