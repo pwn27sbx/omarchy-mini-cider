@@ -2,6 +2,8 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Io
+import Quickshell.Services.Mpris
+import "lib/Playback.js" as Playback
 import qs.Ui
 import qs.Commons
 
@@ -245,6 +247,48 @@ BarWidget {
             root.capNowPlaying, root.localTimeoutMs, function() {});
     }
 
+    // MPRIS truth: the player whose Identity is "Cider". Null when Cider
+    // publishes no player; the REST polling below is then the fallback.
+    property var ciderPlayer: Playback.findCider(Mpris.players ? Mpris.players.values : [])
+    readonly property bool hasMpris: ciderPlayer !== null
+    property real mprisSampleRaw: -1
+    property real mprisSampleMs: 0
+
+    Connections {
+        target: Mpris.players
+        ignoreUnknownSignals: true
+        function onValuesChanged() {
+            root.ciderPlayer = Playback.findCider(Mpris.players.values);
+        }
+    }
+
+    // Re-read the player position; project between its ~0.1 s samples.
+    function syncFromMpris(force) {
+        var player = root.ciderPlayer;
+        if (!player) return;
+        // While the user drags the slider the optimistic position wins.
+        if (!force && Date.now() - root.lastSeekTime < 600) return;
+        root.isPlaying = player.isPlaying === true;
+        if (player.positionSupported === false) return;
+        player.positionChanged();
+        var raw = Number(player.position);
+        if (!isFinite(raw) || raw < 0) return;
+        var now = Date.now();
+        if (force || raw !== root.mprisSampleRaw) {
+            root.mprisSampleRaw = raw;
+            root.mprisSampleMs = now;
+        }
+        root.trackPosition = Playback.projectPosition(root.mprisSampleRaw, root.mprisSampleMs,
+            now, root.isPlaying, root.trackLength);
+    }
+
+    Connections {
+        target: root.ciderPlayer
+        ignoreUnknownSignals: true
+        function onIsPlayingChanged() { root.syncFromMpris(true); }
+        function onTrackChanged() { root.syncFromMpris(true); }
+    }
+
     property bool isPlaying: false
     property real trackPosition: 0
     property real trackLength: 0
@@ -257,7 +301,7 @@ BarWidget {
 
     Timer {
         id: playbackTimer
-        interval: 50
+        interval: 33
         running: true
         repeat: true
         onTriggered: {
@@ -265,7 +309,10 @@ BarWidget {
             var dt = (now - root.lastTimerTick) / 1000.0;
             root.lastTimerTick = now;
 
-            if (root.isPlaying) {
+            if (root.hasMpris) {
+                root.syncFromMpris(false);
+            } else if (root.isPlaying) {
+                // REST fallback: extrapolate between 1 s polls.
                 root.trackPosition += dt;
             }
             
@@ -379,26 +426,27 @@ BarWidget {
                 var pos = parseFloat(data.info.currentPlaybackTime);
                 var len = data.info.durationInMillis ? data.info.durationInMillis / 1000 : 0;
 
+                // Duration always comes from REST (MPRIS length is unreliable).
                 if (Date.now() - root.lastSeekTime > 2000) {
-                    var newPos = isNaN(pos) ? 0 : pos;
-                    if (Math.abs(root.trackPosition - newPos) > 0.5) {
-                        root.trackPosition = newPos;
-                    }
                     root.trackLength = isNaN(len) ? 0 : len;
                 }
 
-                // Calcular isPlaying detectando si el tiempo avanza
-                if (root.lastPlaybackTimeCheck !== -1) {
-                    if (Math.abs(pos - root.lastPlaybackTimeCheck) > 0.05) {
-                        root.isPlaying = true;
-                    } else {
-                        root.isPlaying = false;
+                if (!root.hasMpris) {
+                    // Fallback without an MPRIS player: REST position, and a
+                    // play state guessed from whether the position advances.
+                    if (Date.now() - root.lastSeekTime > 2000) {
+                        var newPos = isNaN(pos) ? 0 : pos;
+                        if (Math.abs(root.trackPosition - newPos) > 0.5) {
+                            root.trackPosition = newPos;
+                        }
                     }
-                } else {
-                    // Asumimos que está sonando la primera vez si pos > 0
-                    root.isPlaying = pos > 0;
+                    if (root.lastPlaybackTimeCheck !== -1) {
+                        root.isPlaying = Math.abs(pos - root.lastPlaybackTimeCheck) > 0.05;
+                    } else {
+                        root.isPlaying = pos > 0;
+                    }
+                    root.lastPlaybackTimeCheck = pos;
                 }
-                root.lastPlaybackTimeCheck = pos;
 
                 if (root.trackTitle !== root.currentLyricsSong && root.trackTitle !== "Waiting for Cider..." && root.trackTitle !== "Unknown") {
                     root.currentLyricsSong = root.trackTitle;
@@ -439,9 +487,15 @@ BarWidget {
     }
 
     function seek(positionSecs) {
-        if (!root.apiToken) return;
         root.lastSeekTime = Date.now();
         root.trackPosition = positionSecs; // Optimistic update
+        var player = root.ciderPlayer;
+        if (player && player.canSeek === true && player.positionSupported !== false) {
+            player.position = positionSecs;
+            root.syncFromMpris(true); // re-read right after the seek
+            return;
+        }
+        if (!root.apiToken) return;
         root.requestJson("POST", "http://127.0.0.1:10767/api/v1/playback/seek",
             { "apptoken": root.apiToken, "Content-Type": "application/json" },
             JSON.stringify({ position: positionSecs }),
