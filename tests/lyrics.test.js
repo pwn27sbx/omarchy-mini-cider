@@ -319,5 +319,60 @@ test("lrclibLyrics prefers synced lyrics, then plain, then null", () => {
   assert.strictEqual(L.lrclibLyrics(null, 0), null)
 })
 
+// --- lyricState: lead-in / interlude / outro ---
+const GAPLINES = [
+  { start: 10, end: 14, text: "a", words: [] },
+  { start: 15, end: 20, text: "b", words: [] },
+  { start: 30, end: 34, text: "c", words: [{ start: 30, end: 31, text: "c" }, { start: 31, end: 32, text: "" }] },
+  { start: 36, end: 40, text: "d", words: [] },
+]
+
+test("lyricState shows a lead-in before the first line, with progress", () => {
+  const s = L.lyricState(GAPLINES, 5)
+  assert.strictEqual(s.kind, "leadin"); assert.strictEqual(s.index, -1); assert.strictEqual(s.progress, 0.5)
+  assert.strictEqual(L.lyricState(GAPLINES, 0).progress, 0)
+})
+
+test("lyricState keeps the line through a short gap", () => {
+  const s = L.lyricState(GAPLINES, 14.5)
+  assert.strictEqual(s.kind, "line"); assert.strictEqual(s.index, 0)
+})
+
+test("lyricState enters an interlude after a gap longer than 2.5 s", () => {
+  const s = L.lyricState(GAPLINES, 25)
+  assert.strictEqual(s.kind, "interlude"); assert.strictEqual(s.index, 1)
+  assert.strictEqual(s.progress, 0.5)
+})
+
+test("lyricState uses the last word end as the effective line end", () => {
+  // line c ends at 34 but its words stop at 32; next starts at 36 (gap 4 s)
+  assert.strictEqual(L.lyricState(GAPLINES, 33).kind, "interlude")
+  assert.strictEqual(L.lyricState(GAPLINES, 31.5).kind, "line")
+})
+
+test("lyricState reports an outro after the last line ends", () => {
+  const s = L.lyricState(GAPLINES, 41)
+  assert.strictEqual(s.kind, "outro"); assert.strictEqual(s.index, 3)
+  assert.strictEqual(L.lyricState(GAPLINES, 39).kind, "line")
+})
+
+test("lyricState is 'none' for unsynced or empty lyrics", () => {
+  assert.strictEqual(L.lyricState([{ start: -1, end: -1, text: "x", words: [] }], 5).kind, "none")
+  assert.strictEqual(L.lyricState([], 5).kind, "none")
+  assert.strictEqual(L.lyricState(null, 5).kind, "none")
+})
+
+test("gapDots drains three dots as the gap progresses", () => {
+  assert.strictEqual(L.gapDots(0), 3); assert.strictEqual(L.gapDots(0.5), 2)
+  assert.strictEqual(L.gapDots(0.7), 1); assert.strictEqual(L.gapDots(1), 0)
+  assert.strictEqual(L.gapDots(-1), 3); assert.strictEqual(L.gapDots(NaN), 3)
+})
+
+test("gapMarkup colours the lit dots and dims the drained ones", () => {
+  assert.strictEqual(L.gapMarkup(0.5, "#fff", "#444"), '<font color="#fff">♪ · ·</font><font color="#444"> ·</font>')
+  assert.strictEqual(L.gapMarkup(0, "#fff", "#444"), '<font color="#fff">♪ · · ·</font>')
+  assert.strictEqual(L.gapMarkup(1, "#fff", "#444"), '<font color="#fff">♪</font><font color="#444"> · · ·</font>')
+})
+
 if (failed) { console.log(failed + " failed"); process.exit(1) }
 console.log("all passed")

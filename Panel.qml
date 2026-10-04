@@ -4,6 +4,7 @@ import Quickshell.Io
 import Qt5Compat.GraphicalEffects
 import qs.Ui
 import qs.Commons
+import "lib/Lyrics.js" as Lyrics
 
 Item {
     id: root
@@ -697,7 +698,11 @@ Item {
                 delegate: Item {
                     width: lyricsList.width
                     readonly property bool isActive: lyricsList.currentIndex === index && modelData.start >= 0
-                    height: (isActive ? lineFill.implicitHeight : lineText.implicitHeight) + Style.space(4)
+                    // Past the end of the active line (long gap or outro): the
+                    // placeholder replaces the frozen, fully lit line.
+                    readonly property bool inGap: isActive && hostWidget
+                        && (hostWidget.lyricKind === "interlude" || hostWidget.lyricKind === "outro")
+                    height: (isActive && !inGap ? lineFill.implicitHeight : (inGap ? gapText.implicitHeight : lineText.implicitHeight)) + Style.space(4)
                     
                     property real relativeY: y - lyricsList.contentY + (height / 2)
                     property real distFromCenter: Math.abs(relativeY - (lyricsList.height / 2))
@@ -722,9 +727,21 @@ Item {
                         Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.InOutQuad } }
                     }
 
+                    Text {
+                        id: gapText
+                        visible: inGap
+                        anchors.centerIn: parent
+                        textFormat: Text.StyledText
+                        text: inGap ? Lyrics.gapMarkup(hostWidget.lyricKind === "outro" ? 1 : hostWidget.lyricGapProgress,
+                            Color.accent.toString(), Qt.alpha(Color.foreground, 0.4).toString()) : ""
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.bodySmall + 1
+                        font.bold: true
+                    }
+
                     LyricFill {
                         id: lineFill
-                        visible: isActive
+                        visible: isActive && !inGap
                         width: parent.width - Style.space(32)
                         anchors.centerIn: parent
                         line: isActive ? modelData : null
@@ -746,7 +763,23 @@ Item {
                     }
                 }
                 
-                header: Item { width: parent.width; height: lyricsList.height / 2 - Style.space(16) }
+                header: Item {
+                    width: parent.width
+                    height: lyricsList.height / 2 - Style.space(16)
+                    Text {
+                        // Lead-in: the song has not reached its first line yet.
+                        visible: hostWidget && hostWidget.lyricKind === "leadin"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: Style.space(8)
+                        textFormat: Text.StyledText
+                        text: hostWidget ? Lyrics.gapMarkup(hostWidget.lyricGapProgress,
+                            Color.accent.toString(), Qt.alpha(Color.foreground, 0.4).toString()) : ""
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.bodySmall + 1
+                        font.bold: true
+                    }
+                }
                 footer: Item { width: parent.width; height: lyricsList.height / 2 - Style.space(16) }
             }
         }

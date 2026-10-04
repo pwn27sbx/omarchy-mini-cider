@@ -343,6 +343,9 @@ BarWidget {
 
     // -1 before the first synced line or for unsynced lyrics.
     property int currentLyricIndex: -1
+    // "leadin" | "line" | "interlude" | "outro" | "none", see Lyrics.lyricState.
+    property string lyricKind: "none"
+    property real lyricGapProgress: 0
     property var lastTimerTick: Date.now()
 
     Timer {
@@ -362,8 +365,10 @@ BarWidget {
                 root.trackPosition += dt;
             }
             
-            var idx = Lyrics.findLineIndex(root.parsedLyrics, root.trackPosition, root.currentLyricIndex);
-            if (idx !== root.currentLyricIndex) root.currentLyricIndex = idx;
+            var st = Lyrics.lyricState(root.parsedLyrics, root.trackPosition, root.currentLyricIndex);
+            if (st.kind !== root.lyricKind) root.lyricKind = st.kind;
+            if (st.progress !== root.lyricGapProgress) root.lyricGapProgress = st.progress;
+            if (st.index !== root.currentLyricIndex) root.currentLyricIndex = st.index;
         }
     }
 
