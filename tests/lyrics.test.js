@@ -266,6 +266,13 @@ test("pickNeteaseSong ignores duration when unknown and tolerates bad input", ()
   assert.strictEqual(L.pickNeteaseSong([{ name: "Hello" }], "Hello", "", 0), null)
 })
 
+test("rankNeteaseSongs lists every qualifying song, best first", () => {
+  const songs = NE.concat([{ id: 4, name: "Hello", artists: [{ name: "Adele" }], duration: 292000 }])
+  assert.deepStrictEqual(L.rankNeteaseSongs(songs, "Hello", "Adele", 296000), [2, 4])
+  assert.deepStrictEqual(L.rankNeteaseSongs(songs, "Nope", "Adele", 296000), [])
+  assert.deepStrictEqual(L.rankNeteaseSongs(null, "Hello", "Adele", 0), [])
+})
+
 test("neteaseLyrics prefers YRC over LRC and falls back to LRC", () => {
   const both = L.neteaseLyrics({ yrc: { lyric: YRC }, lrc: { lyric: "[00:01.00]x" } }, 0)
   assert.strictEqual(both.format, "yrc"); assert.strictEqual(both.lines.length, 2)
