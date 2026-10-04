@@ -501,11 +501,25 @@ BarWidget {
                 if (!root.isCurrentTrack(trackKey)) return;
                 var result = null;
                 try { result = Lyrics.lrclibLyrics(ldata, root.trackLength); } catch (e) { result = null; }
-                if (result) {
-                    root.applyLyrics(trackKey, result);
-                } else {
-                    root.applyLyrics(trackKey, { format: "none", lines: root.lyricsStatus(ldata ? "Instrumental / No lyrics available." : "Lyrics not found.") });
-                }
+                if (result) root.applyLyrics(trackKey, result);
+                else root.searchLrclib(trackKey, title, artist, durationMs, ldata);
+            });
+    }
+
+    // /api/get is exact; when it finds nothing, rank /api/search results with
+    // the same title, artist, version and duration rules as NetEase.
+    function searchLrclib(trackKey, title, artist, durationMs, getData) {
+        var url = "https://lrclib.net/api/search?track_name=" + encodeURIComponent(title) + "&artist_name=" + encodeURIComponent(artist);
+        root.requestJson("GET", url, null, null, root.capLyrics, root.remoteTimeoutMs,
+            function(rdata) {
+                if (!root.isCurrentTrack(trackKey)) return;
+                var result = null;
+                try {
+                    var ranked = Lyrics.rankLrclibResults(Array.isArray(rdata) ? rdata : null, title, artist, durationMs);
+                    for (var i = 0; i < ranked.length && !result; i++) result = Lyrics.lrclibLyrics(ranked[i], root.trackLength);
+                } catch (e) { result = null; }
+                if (result) root.applyLyrics(trackKey, result);
+                else root.applyLyrics(trackKey, { format: "none", lines: root.lyricsStatus(getData ? "Instrumental / No lyrics available." : "Lyrics not found.") });
             });
     }
 

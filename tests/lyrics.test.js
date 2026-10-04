@@ -336,9 +336,81 @@ test("pickNeteaseSong ignores duration when unknown and tolerates bad input", ()
 
 test("rankNeteaseSongs lists every qualifying song, best first", () => {
   const songs = NE.concat([{ id: 4, name: "Hello", artists: [{ name: "Adele" }], duration: 292000 }])
-  assert.deepStrictEqual(L.rankNeteaseSongs(songs, "Hello", "Adele", 296000), [2, 4])
+  assert.deepStrictEqual(L.rankNeteaseSongs(songs, "Hello", "Adele", 296000), [2])
+  assert.deepStrictEqual(L.rankNeteaseSongs(songs, "Hello", "Adele", 0), [2, 3, 4])
   assert.deepStrictEqual(L.rankNeteaseSongs(songs, "Nope", "Adele", 296000), [])
   assert.deepStrictEqual(L.rankNeteaseSongs(null, "Hello", "Adele", 0), [])
+})
+
+test("normalizeTitle drops feat, brackets and remaster suffixes", () => {
+  assert.strictEqual(L.normalizeTitle("Angels (feat. Someone)"), "angels")
+  assert.strictEqual(L.normalizeTitle("Hello - Remastered 2011"), "hello")
+  assert.strictEqual(L.normalizeTitle("Hello - 2011 Remaster"), "hello")
+  assert.strictEqual(L.normalizeTitle("Song [Deluxe Edition]"), "song")
+  assert.strictEqual(L.normalizeTitle("Don't Stop Me Now"), "dontstopmenow")
+  assert.strictEqual(L.normalizeTitle("(Intro)"), "intro")
+  assert.strictEqual(L.normalizeTitle(null), "")
+})
+
+test("titleTags finds version tags", () => {
+  assert.deepStrictEqual(L.titleTags("Angels (Live at Knebworth)"), ["live"])
+  assert.deepStrictEqual(L.titleTags("Hello - Instrumental"), ["instrumental"])
+  assert.deepStrictEqual(L.titleTags("Hello (Acoustic Remix)"), ["acoustic", "remix"])
+  assert.deepStrictEqual(L.titleTags("Alive"), [])
+  assert.deepStrictEqual(L.titleTags("Angels"), [])
+})
+
+const ANGELS = [
+  { id: 22452246, name: "Angels", artists: [{ name: "Robbie Williams" }], duration: 264500 },
+  { id: 1950450386, name: "Angels", artists: [{ name: "Robbie Williams" }], duration: 265900 },
+  { id: 21524244, name: "Angels", artists: [{ name: "Robbie Williams" }], duration: 265000 },
+]
+
+test("rankNeteaseSongs prefers the closest duration (Angels, 265.05 s)", () => {
+  assert.deepStrictEqual(L.rankNeteaseSongs(ANGELS, "Angels", "Robbie Williams", 265050), [21524244, 22452246, 1950450386])
+})
+
+test("rankNeteaseSongs accepts up to ~2 s, and up to ~4 s only when nothing is closer", () => {
+  const far = [{ id: 7, name: "Angels", artists: [{ name: "Robbie Williams" }], duration: 268500 }]
+  assert.deepStrictEqual(L.rankNeteaseSongs(far, "Angels", "Robbie Williams", 265050), [7])
+  assert.deepStrictEqual(L.rankNeteaseSongs(far.concat(ANGELS), "Angels", "Robbie Williams", 265050).indexOf(7), -1)
+  const tooFar = [{ id: 8, name: "Angels", artists: [{ name: "Robbie Williams" }], duration: 270000 }]
+  assert.deepStrictEqual(L.rankNeteaseSongs(tooFar, "Angels", "Robbie Williams", 265050), [])
+})
+
+test("rankNeteaseSongs requires artist overlap", () => {
+  const other = [{ id: 9, name: "Angels", artists: [{ name: "Someone Else" }], duration: 265050 }]
+  assert.deepStrictEqual(L.rankNeteaseSongs(other, "Angels", "Robbie Williams", 265050), [])
+})
+
+test("rankNeteaseSongs rejects version-tag conflicts unless the playing title has the tag", () => {
+  const songs = [
+    { id: 1, name: "Angels (Live)", artists: [{ name: "Robbie Williams" }], duration: 265000 },
+    { id: 2, name: "Angels - Remastered 2020", artists: [{ name: "Robbie Williams" }], duration: 265200 },
+    { id: 3, name: "Angels (Instrumental)", artists: [{ name: "Robbie Williams" }], duration: 265000 },
+  ]
+  assert.deepStrictEqual(L.rankNeteaseSongs(songs, "Angels", "Robbie Williams", 265000), [2])
+  assert.deepStrictEqual(L.rankNeteaseSongs(songs, "Angels (Live)", "Robbie Williams", 265000), [1])
+})
+
+test("rankNeteaseSongs prefers an exact normalized title over a partial one", () => {
+  const songs = [
+    { id: 1, name: "Angels Like You", artists: [{ name: "Robbie Williams" }], duration: 265050 },
+    { id: 2, name: "Angels (feat. X)", artists: [{ name: "Robbie Williams" }], duration: 265900 },
+  ]
+  assert.deepStrictEqual(L.rankNeteaseSongs(songs, "Angels", "Robbie Williams", 265050), [2, 1])
+})
+
+test("rankLrclibResults applies the same rules to search results", () => {
+  const res = [
+    { id: 1, trackName: "Angels", artistName: "Robbie Williams", duration: 266, syncedLyrics: "[00:01.00]a" },
+    { id: 2, trackName: "Angels", artistName: "Robbie Williams", duration: 265, syncedLyrics: "[00:01.00]a" },
+    { id: 3, trackName: "Angels (Live)", artistName: "Robbie Williams", duration: 265, syncedLyrics: "[00:01.00]a" },
+    { id: 4, trackName: "Angels", artistName: "Robbie Williams", duration: 265, syncedLyrics: null, plainLyrics: "x" },
+  ]
+  const ranked = L.rankLrclibResults(res, "Angels", "Robbie Williams", 265050)
+  assert.deepStrictEqual(ranked.map(r => r.id), [2, 1, 4])
+  assert.deepStrictEqual(L.rankLrclibResults(null, "Angels", "Robbie Williams", 265050), [])
 })
 
 test("neteaseLyrics prefers YRC over LRC and falls back to LRC", () => {
