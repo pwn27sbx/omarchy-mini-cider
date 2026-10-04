@@ -71,6 +71,34 @@ test("projectPosition never goes backwards in time and clamps to length", () => 
 })
 
 
+
+// ---- Track change / metadata settling --------------------------------------
+
+test("trackKey normalises title and artist; empty title means no track", () => {
+  assert.strictEqual(P.trackKey("  Angels ", "Robbie Williams"), P.trackKey("angels", " robbie williams "))
+  assert.notStrictEqual(P.trackKey("Angels", "Robbie Williams"), P.trackKey("I'm Yours", "Jason Mraz"))
+  assert.strictEqual(P.trackKey("", "x"), "")
+  assert.strictEqual(P.trackKey(undefined, undefined), "")
+})
+
+test("metadataAction retries while REST still describes another track (skip A->B->C)", () => {
+  // REST answered for the intermediate track while MPRIS already says Angels.
+  assert.strictEqual(P.metadataAction("Angels", "I'm Yours", 0, 6), "retry")
+  assert.strictEqual(P.metadataAction("Angels", "Angels", 0, 6), "apply")
+  assert.strictEqual(P.metadataAction(" angels", "Angels ", 2, 6), "apply")
+})
+
+test("metadataAction waits out a transient empty MPRIS title, then gives up", () => {
+  assert.strictEqual(P.metadataAction("", "Angels", 0, 6), "retry")
+  assert.strictEqual(P.metadataAction("Angels", "Angels - Single", 5, 6), "retry")
+  assert.strictEqual(P.metadataAction("Angels", "Angels - Single", 6, 6), "apply")
+})
+
+test("metadataAction applies REST as-is without an MPRIS player", () => {
+  assert.strictEqual(P.metadataAction(null, "Angels", 0, 6), "apply")
+  assert.strictEqual(P.metadataAction(undefined, "Angels", 0, 6), "apply")
+})
+
 // ---- Lyrics model ----------------------------------------------------------
 
 const L = load("Lyrics.js")

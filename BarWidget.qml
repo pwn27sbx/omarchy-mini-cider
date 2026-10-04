@@ -287,27 +287,50 @@ BarWidget {
         target: root.ciderPlayer
         ignoreUnknownSignals: true
         function onIsPlayingChanged() { root.syncFromMpris(true); }
-        function onTrackChanged() { root.syncFromMpris(true); root.onCiderTrackChanged(); }
-        function onTrackTitleChanged() { root.onCiderTrackChanged(); }
+        function onTrackChanged() { root.syncFromMpris(true); root.checkMprisTrack(); }
+        function onTrackTitleChanged() { root.checkMprisTrack(); }
+        function onTrackArtistChanged() { root.checkMprisTrack(); }
     }
 
-    // Cider's REST metadata (title, artist, duration) is otherwise only read
-    // while the panel is open. A track change refreshes it once; REST can lag
-    // the MPRIS signal, so an unchanged answer is retried a few times.
+    // MPRIS decides which track is playing; Cider's REST now-playing only
+    // enriches it (artwork, duration) and can lag behind or answer for an
+    // intermediate track when skipping. A new MPRIS track therefore refreshes
+    // REST until its title matches (bounded). The 500 ms check also catches a
+    // change whose signal was missed; it never polls REST by itself.
     property bool awaitingTrackChange: false
     property int trackChangeRetries: 0
+    property string lastMprisTrackKey: ""
+    property bool metadataRefetchPending: false
+    readonly property int maxTrackChangeRetries: 8
 
-    function onCiderTrackChanged() {
+    function checkMprisTrack() {
+        var player = root.ciderPlayer;
+        if (!player) return;
+        var key = Playback.trackKey(player.trackTitle, player.trackArtist);
+        if (key === "" || key === root.lastMprisTrackKey) return;
+        root.lastMprisTrackKey = key;
         root.awaitingTrackChange = true;
         root.trackChangeRetries = 0;
         root.fetchMetadata();
     }
 
     Timer {
+        interval: 500
+        running: root.hasMpris
+        repeat: true
+        onTriggered: root.checkMprisTrack()
+    }
+
+    Timer {
         id: trackChangeRetryTimer
-        interval: 800
+        interval: 700
         repeat: false
         onTriggered: root.fetchMetadata()
+    }
+
+    function retryTrackChange() {
+        root.trackChangeRetries++;
+        trackChangeRetryTimer.restart();
     }
 
     onApiTokenChanged: root.fetchMetadata()
@@ -412,16 +435,30 @@ BarWidget {
     }
 
     function fetchMetadata() {
-        if (!root.apiToken || root.metadataRequestInFlight) return;
+        if (!root.apiToken) return;
+        if (root.metadataRequestInFlight) { root.metadataRefetchPending = true; return; }
         root.metadataRequestInFlight = true;
 
         root.requestJson("GET", "http://127.0.0.1:10767/api/v1/playback/now-playing",
             { "apptoken": root.apiToken }, null, root.capNowPlaying, root.localTimeoutMs,
             function(data) {
                 root.metadataRequestInFlight = false;
+                if (root.metadataRefetchPending) {
+                    // A track change arrived mid-request: this answer may be stale.
+                    root.metadataRefetchPending = false;
+                    Qt.callLater(root.fetchMetadata);
+                    if (root.awaitingTrackChange) return;
+                }
+                if (root.awaitingTrackChange) {
+                    var mprisTitle = root.hasMpris ? root.ciderPlayer.trackTitle : null;
+                    var restTitle = data && data.info ? data.info.name : "";
+                    if (!data || !data.info
+                            || Playback.metadataAction(mprisTitle, restTitle, root.trackChangeRetries, root.maxTrackChangeRetries) === "retry") {
+                        if (root.trackChangeRetries < root.maxTrackChangeRetries) { root.retryTrackChange(); return; }
+                    }
+                    root.awaitingTrackChange = false;
+                }
                 if (!data || !data.info) return;
-
-                var previousTitle = root.trackTitle;
                 root.trackTitle = root.capString(data.info.name || "Unknown", root.maxFieldChars);
                 root.trackArtist = root.capString(data.info.artistName || "Cider", root.maxFieldChars);
 
@@ -468,17 +505,6 @@ BarWidget {
                     root.currentLyricIndex = -1;
                     root.parsedLyrics = root.lyricsStatus("Loading lyrics...");
                     root.fetchLyrics(trackKey, root.trackTitle, root.trackArtist, data.info.durationInMillis || 0);
-                }
-
-                // The REST answer can still describe the previous track right
-                // after an MPRIS track change; ask again shortly.
-                if (root.awaitingTrackChange) {
-                    if (root.trackTitle === previousTitle && root.trackChangeRetries < 3) {
-                        root.trackChangeRetries++;
-                        trackChangeRetryTimer.restart();
-                    } else {
-                        root.awaitingTrackChange = false;
-                    }
                 }
             });
     }
