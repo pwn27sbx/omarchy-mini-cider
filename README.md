@@ -3,8 +3,8 @@
 A beautiful, native, and highly responsive mini-player widget for [Cider 2](https://cider.sh/) (Apple Music), built specifically for the Omarchy desktop environment.
 
 <p align="center">
-  <img src="assets/player.png" alt="Mini Cider player panel with queue" width="336">
-  <img src="assets/onboarding.png" alt="Mini Cider onboarding screen" width="336">
+  <img width="1340" height="1584" alt="SS" src="https://github.com/user-attachments/assets/3eb0a19b-0dc2-4847-98a5-b3d91975d317" />
+  <img width="1344" height="1584" alt="SS2" src="https://github.com/user-attachments/assets/24902359-fd1e-4b2d-aea7-076d91b23796" />
 </p>
 
 ## ✨ Features
