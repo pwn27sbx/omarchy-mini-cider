@@ -108,6 +108,7 @@ BarWidget {
 
     property string legacyTokenPath: String(Qt.resolvedUrl("cider_token.txt")).replace(/^file:\/\//, "")
     property string readTokenHelperPath: String(Qt.resolvedUrl("helpers/read_token.py")).replace(/^file:\/\//, "")
+    property string jsonStoreHelperPath: String(Qt.resolvedUrl("helpers/json_store.py")).replace(/^file:\/\//, "")
     property string saveTokenHelperPath: String(Qt.resolvedUrl("helpers/save_token.py")).replace(/^file:\/\//, "")
 
     Process {
@@ -411,6 +412,24 @@ BarWidget {
     property real lastSeekTime: 0
     property real lastPlaybackTimeCheck: -1
 
+    // Per-track lyrics offset (ms) and the resolved-lyrics cache, both keyed by
+    // normalized title + artist + rounded duration.
+    JsonStore { id: offsetStore; name: "offsets"; helperPath: root.jsonStoreHelperPath; cap: 2000 }
+    JsonStore { id: lyricsStore; name: "lyrics"; helperPath: root.jsonStoreHelperPath; cap: 500 }
+
+    readonly property string currentStoreKey: Lyrics.storeKey(root.trackTitle, root.trackArtist, root.trackLength)
+    readonly property int offsetMs: Number(Lyrics.getEntry(offsetStore.entries, root.currentStoreKey)) || 0
+    // Position the lyrics follow: display = position + offset.
+    readonly property real lyricPosition: root.trackPosition + root.offsetMs / 1000
+
+    function setOffset(ms) {
+        var v = Lyrics.clampOffsetMs(ms);
+        if (v === 0) offsetStore.remove(root.currentStoreKey);
+        else offsetStore.put(root.currentStoreKey, v);
+    }
+    function adjustOffset(direction) { root.setOffset(Lyrics.stepOffsetMs(root.offsetMs, direction)); }
+    function resetOffset() { root.setOffset(0); }
+
     // -1 before the first synced line or for unsynced lyrics.
     property int currentLyricIndex: -1
     // "leadin" | "line" | "interlude" | "outro" | "none", see Lyrics.lyricState.
@@ -435,7 +454,7 @@ BarWidget {
                 root.trackPosition += dt;
             }
             
-            var st = Lyrics.lyricState(root.parsedLyrics, root.trackPosition, root.currentLyricIndex);
+            var st = Lyrics.lyricState(root.parsedLyrics, root.lyricPosition, root.currentLyricIndex);
             if (st.kind !== root.lyricKind) root.lyricKind = st.kind;
             if (st.progress !== root.lyricGapProgress) root.lyricGapProgress = st.progress;
             if (st.index !== root.currentLyricIndex) root.currentLyricIndex = st.index;
@@ -466,7 +485,17 @@ BarWidget {
     // best few ranked candidates are tried in order.
     readonly property int neteaseMaxCandidates: 3
 
+    function cacheKey(durationMs) { return Lyrics.storeKey(root.trackTitle, root.trackArtist, durationMs / 1000); }
+
+    function cacheResolved(source, data, durationMs) {
+        var entry = Lyrics.cacheLyrics(source, data);
+        if (entry) lyricsStore.put(root.cacheKey(durationMs), entry);
+    }
+
     function fetchLyrics(trackKey, title, artist, durationMs) {
+        var cached = null;
+        try { cached = Lyrics.lyricsFromCache(lyricsStore.get(root.cacheKey(durationMs)), root.trackLength); } catch (e) { cached = null; }
+        if (cached) { root.applyLyrics(trackKey, cached); return; }
         var query = (title + " " + artist).trim();
         root.requestJson("GET", root.neteaseSearchUrl + "?s=" + encodeURIComponent(query) + "&type=1&limit=10",
             root.neteaseHeaders, null, root.capLyrics, root.remoteTimeoutMs,
@@ -488,7 +517,7 @@ BarWidget {
                 if (!root.isCurrentTrack(trackKey)) return;
                 var result = null;
                 try { result = Lyrics.neteaseLyrics(ldata, root.trackLength); } catch (e) { result = null; }
-                if (result) root.applyLyrics(trackKey, result);
+                if (result) { root.cacheResolved("netease", ldata, durationMs); root.applyLyrics(trackKey, result); }
                 else root.tryNeteaseCandidates(trackKey, title, artist, durationMs, ids, i + 1);
             });
     }
@@ -501,7 +530,7 @@ BarWidget {
                 if (!root.isCurrentTrack(trackKey)) return;
                 var result = null;
                 try { result = Lyrics.lrclibLyrics(ldata, root.trackLength); } catch (e) { result = null; }
-                if (result) root.applyLyrics(trackKey, result);
+                if (result) { root.cacheResolved("lrclib", ldata, durationMs); root.applyLyrics(trackKey, result); }
                 else root.searchLrclib(trackKey, title, artist, durationMs, ldata);
             });
     }
@@ -514,11 +543,15 @@ BarWidget {
             function(rdata) {
                 if (!root.isCurrentTrack(trackKey)) return;
                 var result = null;
+                var source = null;
                 try {
                     var ranked = Lyrics.rankLrclibResults(Array.isArray(rdata) ? rdata : null, title, artist, durationMs);
-                    for (var i = 0; i < ranked.length && !result; i++) result = Lyrics.lrclibLyrics(ranked[i], root.trackLength);
+                    for (var i = 0; i < ranked.length && !result; i++) {
+                        result = Lyrics.lrclibLyrics(ranked[i], root.trackLength);
+                        source = ranked[i];
+                    }
                 } catch (e) { result = null; }
-                if (result) root.applyLyrics(trackKey, result);
+                if (result) { root.cacheResolved("lrclib", source, durationMs); root.applyLyrics(trackKey, result); }
                 else root.applyLyrics(trackKey, { format: "none", lines: root.lyricsStatus(getData ? "Instrumental / No lyrics available." : "Lyrics not found.") });
             });
     }
@@ -658,6 +691,9 @@ BarWidget {
             JSON.stringify({ position: positionSecs }),
             root.capNowPlaying, root.localTimeoutMs, function() {});
     }
+
+    // Seek so the line starts on screen, whatever the offset.
+    function seekToLine(lineStart) { root.seek(lineStart - root.offsetMs / 1000); }
 
     function toggle() {
         popup.open = !popup.open;

@@ -681,6 +681,11 @@ Item {
                     if (hostWidget) hostWidget.nextTrack();
                     event.accepted = true;
                 }
+                Keys.onPressed: function(event) {
+                    if (!hostWidget) return;
+                    if (event.text === "[") { hostWidget.adjustOffset(-1); event.accepted = true; }
+                    else if (event.text === "]") { hostWidget.adjustOffset(1); event.accepted = true; }
+                }
                 
                 currentIndex: hostWidget ? hostWidget.currentLyricIndex : 0
                 onCurrentIndexChanged: {
@@ -745,7 +750,7 @@ Item {
                         width: parent.width - Style.space(32)
                         anchors.centerIn: parent
                         line: isActive ? modelData : null
-                        position: hostWidget ? hostWidget.trackPosition : 0
+                        position: hostWidget ? hostWidget.lyricPosition : 0
                         sungColor: Color.foreground
                         fillColor: Color.accent
                         fontFamily: Style.font.family
@@ -757,7 +762,7 @@ Item {
                         cursorShape: modelData.start >= 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                         onClicked: {
                             if (modelData.start >= 0 && hostWidget) {
-                                hostWidget.seek(modelData.start);
+                                hostWidget.seekToLine(modelData.start);
                             }
                         }
                     }
@@ -781,6 +786,44 @@ Item {
                     }
                 }
                 footer: Item { width: parent.width; height: lyricsList.height / 2 - Style.space(16) }
+            }
+
+            // Per-track lyrics offset: "-" / value (click to reset) / "+".
+            Row {
+                visible: root.currentTab === 1 && hostWidget && hostWidget.lyricKind !== "none"
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: Style.space(4)
+                spacing: Style.space(2)
+                z: 2
+
+                Repeater {
+                    model: ["-", "value", "+"]
+                    delegate: Rectangle {
+                        readonly property bool isValue: modelData === "value"
+                        width: isValue ? Style.space(44) : Style.space(22)
+                        height: Style.space(22)
+                        radius: Style.cornerRadius
+                        color: Util.alpha(Color.foreground, 0.08)
+                        Text {
+                            anchors.centerIn: parent
+                            text: isValue ? (hostWidget ? Lyrics.formatOffset(hostWidget.offsetMs) : "0.0s") : modelData
+                            color: isValue && hostWidget && hostWidget.offsetMs !== 0 ? Color.accent : Color.foreground
+                            opacity: isValue ? 0.8 : 0.9
+                            font.family: Style.font.family
+                            font.pixelSize: Style.font.bodySmall - 1
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (!hostWidget) return;
+                                if (isValue) hostWidget.resetOffset();
+                                else hostWidget.adjustOffset(modelData === "-" ? -1 : 1);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

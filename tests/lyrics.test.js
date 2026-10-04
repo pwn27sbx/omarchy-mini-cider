@@ -413,6 +413,94 @@ test("rankLrclibResults applies the same rules to search results", () => {
   assert.deepStrictEqual(L.rankLrclibResults(null, "Angels", "Robbie Williams", 265050), [])
 })
 
+// --- per-track offset and lyrics cache ---
+test("storeKey joins normalized title, artist and rounded duration", () => {
+  assert.strictEqual(L.storeKey("Angels (feat. X) - Remastered 2011", "Robbie Williams", 265.05), "angels|robbiewilliams|265")
+  assert.strictEqual(L.storeKey("Angels", "Robbie Williams", 265.49), L.storeKey("angels", "robbie  williams", 265))
+  assert.notStrictEqual(L.storeKey("Angels", "Robbie Williams", 265), L.storeKey("Angels", "Robbie Williams", 270))
+  assert.strictEqual(L.storeKey("Angels", "Robbie Williams", 0), "angels|robbiewilliams|0")
+  assert.ok(L.storeKey(null, null, NaN).indexOf("|") !== -1)
+  assert.ok(L.storeKey("x".repeat(500), "y", 1).length <= 300)
+})
+
+test("clampOffsetMs limits to +-10 s and snaps to 100 ms", () => {
+  assert.strictEqual(L.clampOffsetMs(25000), 10000); assert.strictEqual(L.clampOffsetMs(-25000), -10000)
+  assert.strictEqual(L.clampOffsetMs(340), 300); assert.strictEqual(L.clampOffsetMs(350), 400)
+  assert.strictEqual(L.clampOffsetMs(NaN), 0); assert.strictEqual(L.clampOffsetMs(undefined), 0)
+  assert.strictEqual(L.clampOffsetMs(-0), 0)
+})
+
+test("stepOffsetMs moves by 100 ms and stops at the limits", () => {
+  assert.strictEqual(L.stepOffsetMs(0, 1), 100); assert.strictEqual(L.stepOffsetMs(0, -1), -100)
+  assert.strictEqual(L.stepOffsetMs(9950, 1), 10000); assert.strictEqual(L.stepOffsetMs(10000, 1), 10000)
+  assert.strictEqual(L.stepOffsetMs(-10000, -1), -10000)
+  assert.strictEqual(L.stepOffsetMs(100, -1), 0)
+})
+
+test("formatOffset prints a signed value in seconds", () => {
+  assert.strictEqual(L.formatOffset(0), "0.0s"); assert.strictEqual(L.formatOffset(300), "+0.3s")
+  assert.strictEqual(L.formatOffset(-1200), "-1.2s"); assert.strictEqual(L.formatOffset(10000), "+10.0s")
+})
+
+test("putEntry stores a value with its time and evicts the oldest beyond the cap", () => {
+  let st = {}
+  st = L.putEntry(st, "a|x|1", { n: 1 }, 100, 3)
+  st = L.putEntry(st, "b|x|1", { n: 2 }, 200, 3)
+  st = L.putEntry(st, "c|x|1", { n: 3 }, 300, 3)
+  assert.deepStrictEqual(L.getEntry(st, "b|x|1"), { n: 2 })
+  st = L.putEntry(st, "d|x|1", { n: 4 }, 400, 3)
+  assert.strictEqual(Object.keys(st).length, 3)
+  assert.strictEqual(L.getEntry(st, "a|x|1"), undefined)
+  st = L.putEntry(st, "b|x|1", { n: 9 }, 500, 3)  // refreshing b makes c the oldest
+  st = L.putEntry(st, "e|x|1", { n: 5 }, 600, 3)
+  assert.strictEqual(L.getEntry(st, "c|x|1"), undefined); assert.deepStrictEqual(L.getEntry(st, "b|x|1"), { n: 9 })
+})
+
+test("putEntry does not mutate its input and removeEntry drops a key", () => {
+  const a = L.putEntry({}, "a|x|1", 1, 1, 5)
+  const b = L.putEntry(a, "b|x|1", 2, 2, 5)
+  assert.strictEqual(Object.keys(a).length, 1)
+  assert.strictEqual(Object.keys(L.removeEntry(b, "a|x|1")).length, 1)
+  assert.strictEqual(L.getEntry(L.removeEntry(b, "a|x|1"), "a|x|1"), undefined)
+})
+
+test("parseStore keeps valid entries and survives garbage", () => {
+  const ok = L.parseStore(JSON.stringify({ "a|x|1": { v: 5, t: 10 }, "bad|x|1": { v: 1 }, "worse|x|1": 7 }))
+  assert.deepStrictEqual(Object.keys(ok), ["a|x|1"])
+  assert.deepStrictEqual(L.parseStore("{broken"), {}); assert.deepStrictEqual(L.parseStore("[1]"), {})
+  assert.deepStrictEqual(L.parseStore(""), {}); assert.deepStrictEqual(L.parseStore(null), {})
+  assert.deepStrictEqual(L.parseStore('{"__proto__": {"v": 1, "t": 1}}'), {})
+})
+
+test("mergeStores prefers the newer entry per key and trims to the cap", () => {
+  const a = { "a|x|1": { v: "old", t: 1 }, "b|x|1": { v: "b", t: 5 } }
+  const b = { "a|x|1": { v: "new", t: 9 }, "c|x|1": { v: "c", t: 7 } }
+  const m = L.mergeStores(a, b, 10)
+  assert.strictEqual(L.getEntry(m, "a|x|1"), "new"); assert.strictEqual(Object.keys(m).length, 3)
+  assert.deepStrictEqual(Object.keys(L.mergeStores(a, b, 2)).sort(), ["a|x|1", "c|x|1"])
+})
+
+test("cacheLyrics and lyricsFromCache round-trip NetEase and LRCLIB sources", () => {
+  const ne = { yrc: { lyric: YRC }, lrc: { lyric: "[00:01.00]x" }, other: "dropped" }
+  const e1 = L.cacheLyrics("netease", ne)
+  assert.deepStrictEqual(Object.keys(e1.data).sort(), ["lrc", "yrc"])
+  const r1 = L.lyricsFromCache(JSON.parse(JSON.stringify(e1)), 0)
+  assert.strictEqual(r1.format, "yrc"); assert.strictEqual(r1.source, "netease")
+  const e2 = L.cacheLyrics("lrclib", { syncedLyrics: "[00:01.00]a", plainLyrics: "a", id: 5 })
+  assert.deepStrictEqual(Object.keys(e2.data).sort(), ["plainLyrics", "syncedLyrics"])
+  const r2 = L.lyricsFromCache(e2, 0)
+  assert.strictEqual(r2.format, "lrclib"); assert.strictEqual(r2.source, "lrclib")
+})
+
+test("cacheLyrics refuses oversized or empty sources; lyricsFromCache rejects junk", () => {
+  assert.strictEqual(L.cacheLyrics("netease", { lrc: { lyric: "x".repeat(300000) } }), null)
+  assert.strictEqual(L.cacheLyrics("lrclib", {}), null)
+  assert.strictEqual(L.cacheLyrics("other", { syncedLyrics: "a" }), null)
+  assert.strictEqual(L.lyricsFromCache(null, 0), null)
+  assert.strictEqual(L.lyricsFromCache({ src: "netease", data: 5 }, 0), null)
+  assert.strictEqual(L.lyricsFromCache({ src: "nope", data: {} }, 0), null)
+})
+
 test("neteaseLyrics prefers YRC over LRC and falls back to LRC", () => {
   const both = L.neteaseLyrics({ yrc: { lyric: YRC }, lrc: { lyric: "[00:01.00]x" } }, 0)
   assert.strictEqual(both.format, "yrc"); assert.strictEqual(both.lines.length, 2)
